@@ -17,18 +17,8 @@ install
 
    $ sudo cp blockdiag.php ${MEDIAWIKI_ROOT}/extension/
 
-2. Edit LocalSettings.php 
-
-::
-
-   $ sudo vim ${MEDIAWIKI_ROOT}/LocalSettings.php
-   ## Add follow lines
-   require_once("$IP/extensions/blockdiag.php");
-   $wgVerifyMimeType = false;
-   $wgAllowTitlesInSVG=true;
 
 known issues
 ============
 
-- Need reload page after add or edit blockdiag chart.
 

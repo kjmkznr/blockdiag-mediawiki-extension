@@ -14,6 +14,7 @@
 **/
 
 if( defined( 'MEDIAWIKI' ) ) {
+
 	$wgHooks['ParserFirstCallInit'][] = 'blockdiagMain';
 	$wgJobClasses['uploadBlockdiag'] = 'UploadBlockdiagJob';
 	$wgExtensionCredits['parserhook'][] = array(
@@ -28,14 +29,25 @@ if( defined( 'MEDIAWIKI' ) ) {
 		return true;
 	}
 
-
 	function blockdiagDisplay( $input, $args, $parser ){
-		global $wpTmpDirectory;
-		$newBlockdiag = new Blockdiag($parser, $wpTmpDirectory, $input);
+		global $wgTmpDirectory;
+		global $wgUploadDirectory;
+		global $wgUploadPath;
+
+		$wgBlockdiagDirectory = "$wgUploadDirectory/blockdiag";
+		$wgBlockdiagUrl = "$wgUploadPath/blockdiag";
+
+		$newBlockdiag = new Blockdiag( 
+			$wgBlockdiagDirectory,
+			$wgBlockdiagUrl,
+			$wgTmpDirectory, 
+			$input
+		);
 		$html = $newBlockdiag->showImage();
 
 		return $html;
 	}
+
 }
 
 /**
@@ -43,143 +55,123 @@ if( defined( 'MEDIAWIKI' ) ) {
  **/
 class Blockdiag {
 	private $_blockdiag_path = '/usr/bin/blockdiag';
-	private $_dstFileName = '';
-	private $_srcFileName;
-	private $_uploadComment;
-	private $_parser;
-	private $_title;
-	private $_imgType = 'svg';
+	private $_imgType = 'png';
+	private $_hash;
+	private $_source;
 	private $_tmpDir;
+	private $_blockdiagDir;
+	private $_blockdiagUrl;
 
-	public function __construct( $parser,  $tmpDir, $source )
+	public function __construct( $blockdiagDir, $blockdiagUrl, $tmpDir, $source )
 	{
         	if(!is_file($this->_blockdiag_path))
         	{
         	    throw new Exception('blockdiag is not found at the specified place ($_blockdiag_path).', 1);
-        	    return FALSE;
+        	    return false;
 		}
-		$this->_parser = $parser;
-		$this->_title = $parser->getTitle();
-		$this->_tmpDir = $tmpDir;
-		$this->_dstFileName = md5($source) . '.' . $this->_imgType;
-		$this->_srcFileName = $this->_write_src($source);
+		$this->_blockdiagDir  = $blockdiagDir;
+		$this->_blockdiagUrl  = $blockdiagUrl;
+		$this->_tmpDir        = $tmpDir;
+		$this->_hash          = md5( $source );
+		$this->_source        = $source;
 	}
 	
 	public function showImage() {
-		$file = wfFindFile($this->_dstFileName);	
-		if( $file && $file->isVisible() ){
-			$filename = $file->getTitle();
-			return $this->_getImage( $filename );
+		if( file_exists( $this->_getImagePath() ) ) {
+			$html = $this->_mkImageTag();
 		} else {
-			$this->_uploadComment = 'generate by '.$this->_title->getFullText();
-			$this->_generate();
-			return $this->_getImage( $this->_dstFileName );
+			$html = $this->_generate();
 		}
-	}
-	private function _getImage( $filename ) {
-		return $this->_parser->recursiveTagParse("[[" . $filename . "]]" );
+
+		return $html;
 	}
 
-	private function _write_src( $input ) {
-		$tmpName = tempnam( $this->_tmpDir, 'blockdiag' );
-		$fp = fopen( $tmpName, 'w');
-		fwrite($fp, $input);
+	private function _generate() {
+		// temporary directory check
+		if( !file_exists( $this->_tmpDir ) ){
+			if( !wfMkdirParents( $this->_tmpDir ) ) {
+				return $this->_error( 'temporary directory is not found.' );
+			}
+		} elseif ( !is_dir( $this->_tmpDir )  ){
+			return $this->_error( 'temporary directory is not directory' );
+		} elseif ( !is_writable( $this->_tmpDir ) ){
+			return $this->_error( 'temporary directory is not writable' );
+		}
+
+		// create temporary file
+		$dstTmpName = tempnam( $this->_tmpDir, 'blockdiag' );
+		$srcTmpName = tempnam( $this->_tmpDir, 'blockdiag' );
+
+		// write blockdiag source
+		$fp = fopen( $srcTmpName, 'w');
+		fwrite($fp, $this->_source);
 		fclose($fp);
-
-		return $tmpName;
-	}
-
-	private function _generate(){
-		$out_tmpName = tempnam( $this->_tmpDir, 'blockdiag' );
 		
 		// generate blockdiag image
-		exec( $this->_blockdiag_path . " -T " . $this->_imgType . " -o " . $out_tmpName. " " . $this->_srcFileName );
+		$cmd = $this->_blockdiag_path . ' -T ' .
+			escapeshellarg( $this->_imgType ) . ' -o ' .
+			escapeshellarg( $dstTmpName ) . ' ' .
+			escapeshellarg( $srcTmpName );
 
-		// upload
-		$jobParams = array( 
-			'tmpName' => $out_tmpName,
-			'dstName' => $this->_dstFileName,
-			'comment' => $this->_uploadComment,
-			'size'    => filesize($out_tmpName),
-		);
-		$job = new UploadBlockdiagJob( $this->_title, $jobParams );
-		if( $job->insert() ) {
-			return true;
-		}	
+		$res = `$cmd`;
+
+		if( filesize( $dstTmpName ) == 0 ) {
+			return $this->_error( 'unknown error.' );
+		}
+
+		// move to image directory
+		$hashpath = $this->_getHashPath();
+		if( !file_exists( $hashpath ) ) {
+			if( !@wfMkdirParents( $hashpath, 0755 ) ) {
+				return $this->_error( 'can not make blockdiag image directory', $this->_blockdiagDir );
+			}
+		} elseif( !is_dir( $hashpath ) ) {
+			return $this->_error( 'blockdiag image directory is already exists. but not directory' );
+		} elseif( !is_writable( $hashpath ) ) {
+			return $this->_error( 'blockdiag image directory is not writable' );
+		}
+
+		if( !rename( "$dstTmpName", "$hashpath/{$this->_hash}.png" ) ) {
+			return $this->_error( 'can not rename blockdiag image' );
+		}
+
+		return $this->_mkImageTag();
+	}
+	
+	private function _mkImageTag() {
+		$url = $this->_getImageUrl();
+
+		return Xml::element(
+		       	'img',
+			array( 
+				'class' => 'blockdiag',
+				'src' => $url,
+			)
+		);	
+	}
+
+	private function _getImageUrl() {
+		return "{$this->_blockdiagUrl}/{$this->_getHashSubPath()}/{$this->_hash}.png";
+	}
+
+	private function _getImagePath() {
+		return "{$this->_blockdiagDir}/{$this->_getHashSubPath()}/{$this->_hash}.png";
+	}
+
+	private function _getHashPath() {
+		return "{$this->_blockdiagDir}/{$this->_getHashSubPath()}";
+	}
+	
+	private function _getHashSubPath() {
+		return substr($this->_hash, 0, 1)
+					.'/'. substr($this->_hash, 1, 1)
+					.'/'. substr($this->_hash, 2, 1);
+	}
+
+	private function _error( $msg, $append = '' ) {
+		$mf     = 'blockdiag';
+		$errmsg = htmlspecialchars( $msg . ' ' . $append );
+		return "<strong class='error'>$mf ($errmsg)</strong>\n";
 	}
 }
 
-/* 
- * UploadBlockdiagJob
- *   
- *  based on QrCode.php
- *
- */
-// not changeable 
-define('BLOCKDIAG_BOT','blockdiag generator');	// if a user changes this, the name won't be protected anymore
-$wgReservedUsernames[] = BLOCKDIAG_BOT;	// Unless we removed the var from his influence
-
-class UploadBlockdiagJob extends Job {
-	public function __construct( $title, $params, $id = 0 ) {
-		$this->_dstFileName = $params['dstName'];
-		$this->_tmpName = $params['tmpName'];
-		$this->_uploadComment = $params['comment'];
-		$this->_fileSize = $params['size'];
-		$this->title = $title;
-		parent::__construct( 'uploadBlockdiag', $title, $params, $id );
-	}
-
-	/**
-	 * Handle the mediawiki file upload process
-	 * @return boolean status of file "upload"
-	 */
-	public function run() {
-		global $wgOut;
-
-		$mUpload = new UploadFromFile();
-		$mUpload->initialize( $this->_dstFileName, $this->_tmpName, $this->_fileSize );
-
-		$pageText = 'blockdiag '.$this->_dstFileName.', generated on '.date( "r" )
-                        .' by the blockdiag Extension for page [['.$this->title->getFullText().']].';
-
-
-		// Upload verification
-		$details = $mUpload->verifyUpload();
-		if ( $details['status'] != UploadBase::OK ) {
-			var_dump($details);
-			return false;
-		}
-
-		$status = $mUpload->performUpload( $this->_uploadComment, $pageText, false, $this->_getBot() );
-
-		if ( $status->isGood() ) {
-			return true;
-		} else {
-			$wgOut->addWikiText( $status->getWikiText() );
-			return false;
-		}
-	}
-
-	/**
-	 * Create or select a bot user to attribute the code generation to
-	 * @return user object
-	 * @note there doesn't seem to be a decent method for checking if a user already exists
-	 * */
-	private function _getBot(){
-		$bot = User::createNew( BLOCKDIAG_BOT );
-		if( $bot != null ){
-			wfDebug( 'blockdiag::_getBot: Created new user '. BLOCKDIAG_BOT ."\n" );
-			//$bot->setPassword( '' );   // doc says empty password disables, but this triggers an exception
-		} else {
-			$bot = User::newFromName( BLOCKDIAG_BOT );
-		}   
-
-		if( !$bot->isAllowed( 'bot' ) ) {	// User::isBot() has been deprecated
-			$bot->addGroup( 'bot' );
-			wfDebug( 'blockdiag::_getBot: Added user '. BLOCKDIAG_BOT.' to the Bot group'."\n" );
-		}
-
-		return $bot;
-	}
-}
-?>
