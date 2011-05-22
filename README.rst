@@ -17,6 +17,22 @@ install
 
    $ sudo cp blockdiag.php ${MEDIAWIKI_ROOT}/extension/
 
+2. Add line to LocalSettings.php ::
+
+   + require_once("$IP/extensions/blockdiag.php");
+
+example
+=======
+
+::
+
+        <blockdiag>
+        {
+                A -> B -> C
+                     B -> D -> E
+        }
+        </blockdiag>
+
 
 known issues
 ============
