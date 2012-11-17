@@ -5,7 +5,7 @@ Blockdiag MediaWiki Extension
 requirement
 ===========
 
-- blockdiag_
+- blockdiag_ (or seqdiag, actdiag, nwdiag)
 - mediawiki >1.16
 
 .. _blockdiag: http://tk0miya.bitbucket.org/blockdiag/build/html/
@@ -33,6 +33,16 @@ example
         }
         </blockdiag>
 
+If you want to use other *diag tools, specify a name before "{", like "seqdiag {".
+
+::
+
+       <blockdiag>
+       seqdiag {
+               A -> B;
+                    B -> C;
+       }
+       </blockdiag>
 
 known issues
 ============
