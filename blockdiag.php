@@ -7,7 +7,7 @@
 
 /**
   blockdiag_example:
-  {
+  blockdiag {
     A -> B -> C
          B -> D    
   }
@@ -54,7 +54,14 @@ if( defined( 'MEDIAWIKI' ) ) {
  * Blockdiag
  **/
 class Blockdiag {
-	private $_blockdiag_path = '/usr/bin/blockdiag';
+        private $_path_array = array(
+           'blockdiag' => '/usr/local/bin/blockdiag',
+           'seqdiag' => '/usr/local/bin/seqdiag',
+           'actdiag' => '/usr/local/bin/actdiag',
+           'nwdiag' => '/usr/local/bin/nwdiag',
+           'rackdiag' => '/usr/local/bin/rackdiag',     # in nwdiag
+           'packetdiag' => '/usr/local/bin/packetdiag', # in nwdiag
+           );
 	private $_imgType = 'png';
 	private $_hash;
 	private $_source;
@@ -64,11 +71,6 @@ class Blockdiag {
 
 	public function __construct( $blockdiagDir, $blockdiagUrl, $tmpDir, $source )
 	{
-        	if(!is_file($this->_blockdiag_path))
-        	{
-        	    throw new Exception('blockdiag is not found at the specified place ($_blockdiag_path).', 1);
-        	    return false;
-		}
 		$this->_blockdiagDir  = $blockdiagDir;
 		$this->_blockdiagUrl  = $blockdiagUrl;
 		$this->_tmpDir        = $tmpDir;
@@ -87,6 +89,19 @@ class Blockdiag {
 	}
 
 	private function _generate() {
+                if (preg_match('/^\s*(\w+)\s*{/', $this->_source, $matches)) {
+                   $diagram_type = $matches[1];
+                } else { 
+                   #return $this->_error("diagtype is not specified.");
+                   $diagram_type = 'blockdiag'; # blockdiag for default
+                }
+                
+                $diagprog_path = $this->_path_array[$diagram_type];
+        	if (!is_file($diagprog_path))
+        	{
+        	    return $this->_error("$diagram_type is not found at the specified place.");
+		}
+
 		// temporary directory check
 		if( !file_exists( $this->_tmpDir ) ){
 			if( !wfMkdirParents( $this->_tmpDir ) ) {
@@ -108,7 +123,7 @@ class Blockdiag {
 		fclose($fp);
 		
 		// generate blockdiag image
-		$cmd = $this->_blockdiag_path . ' -T ' .
+		$cmd = $diagprog_path . ' -T ' .
 			escapeshellarg( $this->_imgType ) . ' -o ' .
 			escapeshellarg( $dstTmpName ) . ' ' .
 			escapeshellarg( $srcTmpName );
